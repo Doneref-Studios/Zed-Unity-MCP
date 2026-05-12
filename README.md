@@ -13,9 +13,22 @@ A [Zed](https://zed.dev) extension that connects Zed's Agent Panel to the [Unity
 
 2. Install this extension in Zed from the Extensions marketplace (`unity-mcp`).
 
-3. Start the Agent Panel in Zed and the relay will be launched automatically.
+3. Enable context server tools in your Zed agent profile. Add the following to your Zed `settings.json` (Cmd/Ctrl+Shift+P → `zed: open settings`):
 
-4. On first connection, Unity will show a **Pending Connection** prompt — click **Accept** to authorize Zed.
+```json
+"agent": {
+  "profiles": {
+    "write": { "name": "Write", "enable_all_context_servers": true },
+    "ask":   { "name": "Ask",   "enable_all_context_servers": true }
+  }
+}
+```
+
+> Without this, Zed silently disables all MCP context server tools in every profile by default.
+
+4. Start the Agent Panel in Zed and the relay will be launched automatically.
+
+5. On first connection, Unity will show a **Pending Connection** prompt — click **Accept** to authorize Zed.
 
 ## How It Works
 
