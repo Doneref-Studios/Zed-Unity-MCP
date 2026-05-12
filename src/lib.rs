@@ -22,43 +22,82 @@ impl zed::Extension for UnityMcpExtension {
     }
 }
 
+/// Derives the user's home directory from the `PWD` env var that Zed injects into
+/// the WASM sandbox.
+///
+/// Zed sets `PWD` to the extension work directory (e.g.
+/// `C:/Users/Alice/AppData/Roaming/Zed/extensions/work/unity-mcp` on Windows,
+/// `/Users/Alice/Library/.../work/unity-mcp` on macOS,
+/// `/home/alice/.config/.../work/unity-mcp` on Linux).
+/// We parse the username from that path and reconstruct the home dir.
+fn home_from_pwd() -> Option<String> {
+    let pwd = std::env::var("PWD").ok()?;
+    let (os, _) = zed::current_platform();
+    let parts: Vec<&str> = pwd.split('/').collect();
+
+    match os {
+        // Windows PWD: "C:/Users/Username/..."  → parts = ["C:", "Users", "Username", ...]
+        zed::Os::Windows => {
+            if parts.len() >= 3 && parts[1].eq_ignore_ascii_case("Users") {
+                Some(format!("{}/Users/{}", parts[0], parts[2]))
+            } else {
+                None
+            }
+        }
+        // macOS PWD: "/Users/Username/..."  → parts = ["", "Users", "Username", ...]
+        zed::Os::Mac => {
+            if parts.len() >= 3 && parts[1] == "Users" {
+                Some(format!("/Users/{}", parts[2]))
+            } else {
+                None
+            }
+        }
+        // Linux PWD: "/home/username/..."  → parts = ["", "home", "username", ...]
+        zed::Os::Linux => {
+            if parts.len() >= 3 && parts[1] == "home" {
+                Some(format!("/home/{}", parts[2]))
+            } else {
+                None
+            }
+        }
+    }
+}
+
 /// Resolves the platform-specific path to the Unity MCP relay binary.
 ///
 /// Unity installs the relay to:
-/// - Windows: `%USERPROFILE%\.unity\relay\relay_win.exe`
+/// - Windows:              `%USERPROFILE%\.unity\relay\relay_win.exe`
 /// - macOS (Apple Silicon): `~/.unity/relay/relay_mac_arm64.app/Contents/MacOS/relay_mac_arm64`
 /// - macOS (Intel):         `~/.unity/relay/relay_mac_x64.app/Contents/MacOS/relay_mac_x64`
 /// - Linux:                 `~/.unity/relay/relay_linux`
 fn get_relay_path() -> Result<String> {
-    // Windows: USERPROFILE is always set
-    if let Ok(userprofile) = std::env::var("USERPROFILE") {
-        return Ok(format!(
-            "{}\\.unity\\relay\\relay_win.exe",
-            userprofile
-        ));
-    }
+    let home = home_from_pwd()
+        .ok_or("Could not determine home directory: PWD env var missing or has unexpected format")?;
+    let (os, arch) = zed::current_platform();
 
-    let home = std::env::var("HOME")
-        .map_err(|_| "Could not find home directory (HOME / USERPROFILE not set)")?;
+    let path = match (os, arch) {
+        (zed::Os::Windows, _) => {
+            // Convert forward-slash PWD form back to Windows backslashes.
+            format!("{}\\.unity\\relay\\relay_win.exe", home.replace('/', "\\"))
+        }
+        (zed::Os::Mac, zed::Architecture::Aarch64) => {
+            format!(
+                "{}/.unity/relay/relay_mac_arm64.app/Contents/MacOS/relay_mac_arm64",
+                home
+            )
+        }
+        (zed::Os::Mac, _) => {
+            format!(
+                "{}/.unity/relay/relay_mac_x64.app/Contents/MacOS/relay_mac_x64",
+                home
+            )
+        }
+        (zed::Os::Linux, _) => {
+            format!("{}/.unity/relay/relay_linux", home)
+        }
+    };
 
-    // Prefer arm64 if it exists, otherwise fall back to x64, then Linux
-    let mac_arm = format!(
-        "{}/.unity/relay/relay_mac_arm64.app/Contents/MacOS/relay_mac_arm64",
-        home
-    );
-    if std::path::Path::new(&mac_arm).exists() {
-        return Ok(mac_arm);
-    }
-
-    let mac_x64 = format!(
-        "{}/.unity/relay/relay_mac_x64.app/Contents/MacOS/relay_mac_x64",
-        home
-    );
-    if std::path::Path::new(&mac_x64).exists() {
-        return Ok(mac_x64);
-    }
-
-    Ok(format!("{}/.unity/relay/relay_linux", home))
+    Ok(path)
 }
 
 zed::register_extension!(UnityMcpExtension);
